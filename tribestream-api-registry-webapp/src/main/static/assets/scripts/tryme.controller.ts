@@ -37,14 +37,22 @@ export class TryMeController {
       }
     };
 
+    $scope.stopScenarioExecution = () => {
+      console.log("Going to spot execution");
+
+      this.$scope.request.scenario.$$executionHandler && this.$scope.request.scenario.$$executionHandler();
+
+      this.$scope.request.scenario.$$executing = false;
+    };
+
     $scope.removeHeader = h => {
-      $scope.headers = $scope.headers.filter(i => i.name != h.name);
+      this.$scope.headers = this.$scope.headers.filter(i => i.name != h.name);
     };
     $scope.removePathParameter = p => {
-      $scope.pathParameters = $scope.pathParameters.filter(i => i.name != p.name);
+      this.$scope.pathParameters = this.$scope.pathParameters.filter(i => i.name != p.name);
     };
     $scope.removeQueryParameter = p => {
-      $scope.queryParameters = $scope.queryParameters.filter(i => i.name != p.name);
+      this.$scope.queryParameters = this.$scope.queryParameters.filter(i => i.name != p.name);
     };
 
     $scope.onHeaderChange = (name, header) => {
@@ -63,73 +71,86 @@ export class TryMeController {
       }
     };
 
-    $scope.tryIt = () => {
+    this.$scope.tryIt = () => {
+      console.log("Executing");
+      this.$scope.request.scenario.$$executing = true;
       // convert headers, better than watching it which would be slow for no real reason
-      $scope.request.headers = $scope.headers.filter(h => !!h.name && !!h.value).reduce((accumulator, e) => {
+      this.$scope.request.headers = this.$scope.headers.filter(h => !!h.name && !!h.value).reduce((accumulator, e) => {
         accumulator[e.name] = e.value;
         return accumulator;
       }, {});
 
-      $scope.request.signature.headers = $scope.headers.filter(h => !!h.$$useForSignature && !!h.name).map(h => h.name);
-      if (!!$scope.request.signature.$$requestTarget && $scope.request.signature.headers.indexOf('(request-target)') < 0) {
-        $scope.request.signature.headers.push('(request-target)');
+      this.$scope.request.signature.headers = this.$scope.headers.filter(h => !!h.$$useForSignature && !!h.name).map(h => h.name);
+      if (!!this.$scope.request.signature.$$requestTarget && this.$scope.request.signature.headers.indexOf('(request-target)') < 0) {
+        this.$scope.request.signature.headers.push('(request-target)');
+      }
+      if (!!this.$scope.request.oauth2.$$useForSignature) {
+        this.$scope.request.signature.headers.push(this.$scope.request.oauth2.header);
+      }
+      if (!!this.$scope.request.basic.$$useForSignature) {
+        this.$scope.request.signature.headers.push(this.$scope.request.basic.header);
+      }
+      if (!!this.$scope.request.digest.$$useForSignature) {
+        this.$scope.request.signature.headers.push(this.$scope.request.digest.header);
       }
 
       // cleanup scenario model to enable duration case (GUI can have messed it up) and potentially convert duration to a parseable value
-      if (!!$scope.request.scenario.$$useDuration) {
-        $scope.request.scenario.invocations = -1;
-        $scope.request.scenario.duration = ($scope.request.scenario.$$durationTime || '1') + ' ' + ($scope.request.scenario.$$durationUnit || 'seconds');
+      if (!!this.$scope.request.scenario.$$useDuration) {
+        this.$scope.request.scenario.invocations = -1;
+        this.$scope.request.scenario.duration = (this.$scope.request.scenario.$$durationTime || '1') + ' ' + (this.$scope.request.scenario.$$durationUnit || 'seconds');
       } else {
-        $scope.request.scenario.duration = undefined;
+        this.$scope.request.scenario.duration = undefined;
       }
 
       // reset response for new invocation
-      $scope.response = undefined;
-      $scope.responseStream = undefined;
+      this.$scope.response = undefined;
+      this.$scope.responseStream = undefined;
 
       // check it is a scenario or a simple call
-      if ($scope.request.scenario && ($scope.request.scenario.threads > 1 || !!$scope.request.scenario.duration || $scope.request.scenario.invocations > 1)) {
+      if (this.$scope.request.scenario && (this.$scope.request.scenario.threads > 1 || (!!this.$scope.request.scenario.duration && this.$scope.request.scenario.$$useDuration) || this.$scope.request.scenario.invocations > 1)) {
         if(!window['EventSource']) {
           systemMessagesService.error('No Server Send Event support, use a browser support it please.');
           return;
         }
-        $scope.responseStream = $scope.responseStream || {items:[], $$scrollOnOutput: true};
+        this.$scope.responseStream = this.$scope.responseStream || {items:[], $$scrollOnOutput: true};
 
         currentAuthProvider.get().getAuthorizationHeader().then(header => {
-          tryMeService.crypt({http:$scope.request, identity:header}).then(d => {
+          tryMeService.crypt({http:this.$scope.request, identity:header}).then(d => {
             let source = new window['EventSource']('api/try/invoke/stream?request=' + d);
             const onDone = () => {
+              this.$scope.request.scenario.$$executionHandler = undefined;
               source.close();
-              $scope.responseStream.finished = true;
-              tryMeService.crypt({data:$scope.responseStream.items, identity:header}).then(d => {
-                $scope.responseStream.csvLink = $rootScope.baseFullPath + 'api/try/download?output-type=csv' +
-                    '&filename=' + encodeURIComponent($scope.endpointUrlInfo.verb + '_' +
-                        $scope.endpointUrlInfo.endpointPath
+              this.$scope.responseStream.finished = true;
+              tryMeService.crypt({data:this.$scope.responseStream.items, identity:header}).then(d => {
+                this.$scope.responseStream.csvLink = this.$rootScope.baseFullPath + 'api/try/download?output-type=csv' +
+                    '&filename=' + encodeURIComponent(this.$scope.endpointUrlInfo.verb + '_' +
+                        this.$scope.endpointUrlInfo.endpointPath
                           .replace(' ', '').replace(':', '')
                           .replace('{', '').replace('}', '')
                           .replace('/', '_') + '_' +
-                        ($scope.endpointUrlInfo.version || '')) +
+                        (this.$scope.endpointUrlInfo.version || '')) +
                     '&data=' + d;
               });
             };
+            this.$scope.request.scenario.$$executionHandler = onDone;
             source.onerror = error => {
               onDone();
-              $scope.$apply(() => systemMessagesService.error(JSON.stringify(error)));
+              this.$scope.$apply(() => systemMessagesService.error(JSON.stringify(error)));
             };
             source.onmessage = event => {
-                $scope.$apply(() => {
+                this.$scope.$apply(() => {
                   const object = JSON.parse(event.data);
                   if (!!object.total) { // done, we don't use "event" to define the type cause of the number of messages we can get
-                    $scope.responseStream.stats = object;
-                    $scope.responseStream.stats.$$countPerStatusArray = Object.keys(object.countPerStatus || {})
+                    this.$scope.responseStream.stats = object;
+                    this.$scope.responseStream.stats.$$countPerStatusArray = Object.keys(object.countPerStatus || {})
                       .map(k => {
                         return {status: k, count: object.countPerStatus[k]};
                       });
                     onDone();
                   } else {
-                    $scope.responseStream.items.push(object);
-                    if ($scope.responseStream.$$scrollOnOutput) {
-                      $timeout(() => $window.scrollTo(0, $window.innerHeight));
+                    this.$scope.responseStream.items.push(object);
+                    if (this.$scope.responseStream.$$scrollOnOutput) {
+                      this.$timeout(() => $window.scrollTo(0, $window.innerHeight));
                     }
                   }
                 });
@@ -137,23 +158,23 @@ export class TryMeController {
           });
         });
       } else {
-        tryMeService.request($scope.request)
+        tryMeService.request(this.$scope.request)
           .success(result => {
-            $scope.response = result;
-            $scope.response.payloadOptions = $scope.payloadOptions;
-            $scope.response.statusDescription = this.statusDescription(result.status);
-            $scope.response.headers = Object.keys($scope.response.headers).map(key => {
-               return {name: key, value: $scope.response.headers[key]};
+            this.$scope.response = result;
+            this.$scope.response.payloadOptions = this.$scope.payloadOptions;
+            this.$scope.response.statusDescription = this.statusDescription(result.status);
+            this.$scope.response.headers = Object.keys(this.$scope.response.headers).map(key => {
+               return {name: key, value: this.$scope.response.headers[key]};
             });
           })
-          .error(err => systemMessagesService.error('Can\'t execute the request, check the information please'));
+          .error(err => this.systemMessagesService.error('Can\'t execute the request, check the information please'));
       }
     };
 
     $scope.mainMenuOptions = [{
       displayName: 'Invoke',
       icon: 'fa-bolt',
-      invoke: () => $scope.tryIt()
+      invoke: () => this.$scope.tryIt()
     }, {
       displayName: 'Invoke & Download',
       icon: 'fa-cloud-download',
@@ -170,26 +191,27 @@ export class TryMeController {
 
     $scope.menuOptions = [{
       displayName: 'Add OAuth 2.0',
-      invoke: () => $scope.request.oauth2.$$show = true
+      invoke: () => this.$scope.request.oauth2.$$show = true
     }, {
       displayName: 'Add HTTP Signature',
       invoke: () => {
-        $scope.request.signature = {
+        this.$scope.request.signature = {
           header: 'Authorization',
           headers: ['(request-target)'],
           algorithm: 'hmac-sha256',
-          $$show: true
+          $$show: true,
+          $$requestTarget: true
         };
       }
     }, {
       displayName: 'Add Basic Auth',
-      invoke: () => $scope.request.basic.$$show = true
+      invoke: () => this.$scope.request.basic.$$show = true
     }, {
-      displayName: 'Add Payload Digesting',
-      invoke: () => $scope.request.digest.$$show = true
+      displayName: 'Add Digest',
+      invoke: () => this.$scope.request.digest.$$show = true
     }, {
       displayName: 'Add Scenario Configuration',
-      invoke: () => $scope.request.scenario.$$show = true
+      invoke: () => this.$scope.request.scenario.$$show = true
     }, {
       // separator
     }, {
@@ -210,74 +232,75 @@ export class TryMeController {
     }];
     $scope.oauth2Options = [{
       displayName: 'Resource Owner',
-      invoke: () => $scope.request.oauth2.$$resourceOwner = true
+      invoke: () => this.$scope.request.oauth2.$$resourceOwner = true
     }, {
       displayName: 'Client Credentials',
-      invoke: () => $scope.request.oauth2.$$client = true
+      invoke: () => this.$scope.request.oauth2.$$client = true
     }, {
       displayName: 'Force Token Type',
       invoke: () => {
-        $scope.request.oauth2.$$tokenType = true;
-        $scope.request.oauth2.tokenType = 'Bearer';
+        this.$scope.request.oauth2.$$tokenType = true;
+        this.$scope.request.oauth2.tokenType = 'Bearer';
       }
     }];
     $scope.parametersOptions = [{
       displayName: 'Add Header',
-      invoke: () => $scope.headers.push({})
+      invoke: () => this.$scope.headers.push({})
     }, {
       displayName: 'Add Path Parameter',
-      invoke: () => $scope.pathParameters.push({})
+      invoke: () => this.$scope.pathParameters.push({})
     }, {
       displayName: 'Add Query Parameter',
-      invoke: () => $scope.queryParameters.push({})
+      invoke: () => this.$scope.queryParameters.push({})
     }];
 
     $scope.removeOAuth2Client = () => {
-      $scope.request.oauth2.$$client=false;
-      $scope.request.oauth2.clientId = undefined;
-      $scope.request.oauth2.clientSecret = undefined;
+      this.$scope.request.oauth2.$$client=false;
+      this.$scope.request.oauth2.clientId = undefined;
+      this.$scope.request.oauth2.clientSecret = undefined;
     };
     $scope.removeOAuth2ResourceOwner = () => {
-      $scope.request.oauth2.$$resourceOwner=false;
-      $scope.request.oauth2.username = undefined;
-      $scope.request.oauth2.password = undefined;
+      this.$scope.request.oauth2.$$resourceOwner=false;
+      this.$scope.request.oauth2.username = undefined;
+      this.$scope.request.oauth2.password = undefined;
     };
     $scope.removeOAuth2TokenType = () => {
-      $scope.request.oauth2.$$tokenType = false;
-      $scope.request.oauth2.tokenType = undefined;
+      this.$scope.request.oauth2.$$tokenType = false;
+      this.$scope.request.oauth2.tokenType = undefined;
     };
     $scope.removeOAuth2 = () => {
-      $scope.request.oauth2.$$show = false;
-      $scope.request.oauth2.endpoint = undefined;
-      $scope.removeOAuth2Client();
-      $scope.removeOAuth2ResourceOwner();
+      this.$scope.request.oauth2.$$show = false;
+      this.$scope.request.oauth2.endpoint = undefined;
+      this.$scope.removeOAuth2Client();
+      this.$scope.removeOAuth2ResourceOwner();
     };
     $scope.removeSignature = () => {
-      $scope.request.signature.$$show = false;
-      $scope.request.signature.alias = undefined;
-      $scope.request.signature.secret = undefined;
+      this.$scope.request.signature.alias = undefined;
+      this.$scope.request.signature.$$show = false;
+      this.$scope.request.signature.secret = undefined;
     };
     $scope.removeBasic = () => {
-      $scope.request.basic.$$show = false;
-      $scope.request.basic.username = undefined;
-      $scope.request.basic.password = undefined;
+      this.$scope.request.basic.$$show = false;
+      this.$scope.request.basic.username = undefined;
+      this.$scope.request.basic.password = undefined;
     };
     $scope.removeDigest = () => {
-      $scope.request.digest.$$show = false;
-      $scope.request.digest.algorithm = undefined;
+      this.$scope.request.digest.$$show = false;
+      this.$scope.request.digest.algorithm = undefined;
     };
     $scope.removeScenario = () => {
-      $scope.request.scenario.$$show = false;
-      $scope.request.scenario.$$useDuration = false;
+      this.$scope.request.scenario.$$show = false;
+      this.$scope.request.scenario.$$useDuration = false;
       // should we reset the values?
-      $scope.request.scenario.threads = 1;
-      $scope.request.scenario.iterations = 1;
-      $scope.request.scenario.duration = undefined;
+      this.$scope.request.scenario.threads = 1;
+      this.$scope.request.scenario.iterations = 1;
+      this.$scope.request.scenario.duration = undefined;
+      this.$scope.request.scenario.$$executing = false;
     };
 
     tribeEndpointsService.getDetailsFromMetadata($scope.endpointUrlInfo).then(detailsResponse => {
         const detailsData = detailsResponse['data'];
-        $scope.endpoint = {
+        this.$scope.endpoint = {
           httpMethod:  detailsData['httpMethod'],
           path: detailsData.path,
           operation: detailsData.operation
@@ -285,7 +308,7 @@ export class TryMeController {
 
         tribeEndpointsService.getApplicationDetails(tribeLinkHeaderService.parseLinkHeader(detailsData.operation['x-tribestream-api-registry'].links).application)
           .then(applicationDetails => {
-            $scope.application = applicationDetails['data'];
+            this.$scope.application = applicationDetails['data'];
             this.init();
           });
       });
@@ -293,7 +316,8 @@ export class TryMeController {
 
   private init() {
     const swagger = this.$scope.application.swagger;
-    const url = (this.$scope.endpoint.endpointProtocol || 'http') + '://' + swagger.host + (swagger.basePath === '/' ? '' : swagger.basePath) + this.$scope.endpoint.path;
+    const url = (swagger.schemes && swagger.schemes.length ? swagger.schemes[0] || 'http' : 'http') + '://' +
+                    swagger.host + (swagger.basePath === '/' ? '' : swagger.basePath) + this.$scope.endpoint.path;
     const parameters = ((this.$scope.endpoint.operation || {}).parameters || {});
     const querySample = parameters.filter(p => p['in'] === 'query' && !!p['name'])
       .reduce((acc, param) => acc + (!!acc ? '&' : '?') + param['name'] + '=' + this.sampleValue(param['type']), '');
@@ -311,6 +335,7 @@ export class TryMeController {
       oauth2: {
         header: 'Authorization',
         grantType: 'password',
+        endpoint: this.tryMeService.oauth2DefaultEndpoint,
         // for the ui
         $$show: false,
         $$resourceOwner: false,
@@ -340,7 +365,8 @@ export class TryMeController {
         // ui
         $$show: false,
         $$useDuration: false,
-        $$durationUnit: 'seconds'
+        $$durationUnit: 'seconds',
+        $$executing: false
       },
       // ui
       $$forceBody: false
@@ -348,28 +374,41 @@ export class TryMeController {
 
     // we pre-fill all headers of the operation + accept/content-type if consumes/produces are there
     this.$scope.headers = parameters.filter(p => p['in'] === 'header' && !!p['name'])
-      .filter(p => 'content-type' !== p['name'] && 'accept' !== p['name'])
+      .filter(p => 'digest' !== (p['name'] || '').toLowerCase() && 'content-type' !== (p['name'] || '').toLowerCase() && 'accept' !== (p['name'] || '').toLowerCase())
       .map(p => {
-        return { name: p['name'], value: this.sampleValue(p['type']), required: p.required || false, description: p.description };
+        return { name: p['name'], value: this.sampleValue(p['type']), required: p.required || false, description: p.description, type: p.type };
       });
+    const authMethods = ((this.$scope.endpoint.operation['x-tribestream-api-registry'] || {})['auth-methods'] || []).map(e => e.toLowerCase());
+    if (authMethods.indexOf('http signatures') >= 0) {
+      this.$scope.request.signature.$$show = true;
+    }
+    if (authMethods.indexOf('bearer') >= 0) {
+      this.$scope.menuOptions[1].invoke();
+    }
+    if (authMethods.indexOf('basic') >= 0) {
+      this.$scope.request.basic.$$show = true;
+    }
+    if (_.find(parameters, p => p['in'] === 'header' && (p['name'] || '').toLowerCase() === 'digest') || authMethods.indexOf('digest') >= 0) {
+      this.$scope.request.digest.$$show = true;
+    }
     if (this.$scope.endpoint.operation.consumes && this.$scope.endpoint.operation.consumes.length) {
-      this.$scope.headers.push({ name: 'Content-Type', value: this.$scope.endpoint.operation.consumes[0] });
+      this.$scope.headers.push({ name: 'Content-Type', value: this.$scope.endpoint.operation.consumes[0], description: 'The payload mime type', type: 'string' });
     }
     if (this.$scope.endpoint.operation.produces && this.$scope.endpoint.operation.produces.length) {
-      this.$scope.headers.push({ name: 'Accept', value: this.$scope.endpoint.operation.produces[0] });
+      this.$scope.headers.push({ name: 'Accept', value: this.$scope.endpoint.operation.produces[0], description: 'The payload mime type', type: 'string' });
     }
     this.$scope.headerOptions = [ 'Content-Type', 'Accept', 'Date' ];
     this.$scope.headers.forEach(h => this.$scope.headerOptions.push(h.name));
 
     this.$scope.queryParameters = parameters.filter(p => p['in'] === 'query' && !!p['name'])
       .map(p => {
-        return { name: p['name'], value: this.sampleValue(p['type']), required: p.required || false, description: p.description };
+        return { name: p['name'], value: this.sampleValue(p['type']), required: p.required || false, description: p.description, type: p.type };
       });
     this.$scope.queryParameterOptions = this.$scope.queryParameters.map(h => h.name);
 
     this.$scope.pathParameters = parameters.filter(p => p['in'] === 'path' && !!p['name'])
       .map(p => {
-        return { name: p['name'], value: this.sampleValue(p['type']), required: p.required || false, description: p.description };
+        return { name: p['name'], value: this.sampleValue(p['type']), required: p.required || false, description: p.description, type: p.type };
       });
     this.$scope.pathParameterOptions = this.$scope.pathParameters.map(h => h.name);
 
